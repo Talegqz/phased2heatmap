@@ -1,14 +1,10 @@
-'''
-Hourglass network inserted in the pre-activated Resnet 
-Use lr=0.01 for current version
-(c) YANG, Wei 
-'''
-from collections import OrderedDict
 import torch.nn as nn
 import torch.nn.functional as F
+from collections import OrderedDict
 import torch.optim as optim
-import torch
+import util.util as util
 # from .preresnet import BasicBlock, Bottleneck
+
 
 __all__ = ['HourglassNet', 'hg']
 
@@ -99,13 +95,14 @@ class Hourglass(nn.Module):
 class HourglassNet(nn.Module):
     '''Hourglass model from Newell et al ECCV 2016'''
 
-    def __init__(self, block, num_stacks=1, num_blocks=4, num_classes=5):
+    def __init__(self, block,input_channel, num_stacks=2, num_blocks=4, num_classes=1):
         super(HourglassNet, self).__init__()
 
         self.inplanes = 64
         self.num_feats = 128
         self.num_stacks = num_stacks
-        self.conv1 = nn.Conv2d(1, self.inplanes, kernel_size=7, stride=2, padding=3,
+        self.num_classes = num_classes
+        self.conv1 = nn.Conv2d(input_channel, self.inplanes, kernel_size=7, stride=2, padding=3,
                                bias=True)
         self.bn1 = nn.BatchNorm2d(self.inplanes)
         self.relu = nn.ReLU(inplace=True)
@@ -113,8 +110,7 @@ class HourglassNet(nn.Module):
         self.layer2 = self._make_residual(block, self.inplanes, 1)
         self.layer3 = self._make_residual(block, self.num_feats, 1)
         self.maxpool = nn.MaxPool2d(2, stride=2)
-        self.upsamle = nn.ConvTranspose2d(in_channels=num_classes, out_channels=1,kernel_size=6,stride =4,padding=1)
-        self.tanh = nn.Tanh()
+        self.upsamping = nn.Upsample(scale_factor=4)
         # build hourglass modules
         ch = self.num_feats * block.expansion
         hg, res, fc, score, fc_, score_ = [], [], [], [], [], []
@@ -135,7 +131,6 @@ class HourglassNet(nn.Module):
 
         self.optimizer = optim.Adam(self.parameters())
         self.loss_fn = nn.MSELoss()
-
         self.cuda()
     def _make_residual(self, block, planes, blocks, stride=1):
         downsample = None
@@ -162,25 +157,6 @@ class HourglassNet(nn.Module):
             self.relu,
         )
 
-
-
-
-    def fit(self,data,heatmap,gray):
-        self.input = data
-        self.heatmap = heatmap
-        self.gray = gray
-        self.result = self(data)
-
-        loss = self.loss_fn(self.result,heatmap)
-
-        self.optimizer.zero_grad()
-        loss.backward()
-        self.optimizer.step()
-        self.loss = loss
-        return loss
-
-
-
     def forward(self, x):
         out = []
         x = self.conv1(x)
@@ -203,72 +179,110 @@ class HourglassNet(nn.Module):
                 score_ = self.score_[i](score)
                 x = x + fc_ + score_
 
-        out = self.upsamle(out[0])
-        out = self.tanh(out)
+        for i in range(len(out)):
+            out[i] = self.upsamping(out[i])
         return out
+
     def get_current_loss(self):
+
         loss = OrderedDict()
-
-        loss['loss'] = float(getattr(self,'loss'))
-
+        loss['loss'] = float(getattr(self, 'loss'))
 
         return [loss]
 
+    def test(self, data,heatmap):
+
+        self.eval()
+        k = self(data)
+        loss = self.loss_fn(k[-1], heatmap)
+        return loss
+
+    def fit(self, data, heatmap, frame):
+        self.train()
+        data = data.cuda()
+        heatmap = heatmap.cuda()
+        self.input = data
+        self.heatmap = heatmap
+        self.image = frame
+        self.result = self(data)
+
+        loss = self.loss_fn(self.result[-1], heatmap)
+
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
+        self.loss = loss
+
+        return loss
+
+
+
+
     def get_current_visuals(self):
+        import numpy as np
+        import torch
+        import cv2
+
+
         visual_ret = OrderedDict()
 
-        def max_min_norm(array):
-            return (array - torch.min(array) + 10 ** (-100) / (
-                    torch.max(array) - torch.min(array)) + 10 ** (-100))
+        this_pic = self.image.cpu().detach().numpy()
+        this_pic = this_pic[0].copy()
+        # this_pic = this_pic.transpose((1,2,0))
+        # this_pic = (this_pic+1)/2*255
+        this_pic = this_pic.astype(np.uint8)
+        this_pic = np.array(this_pic)
+        import PIL.Image as Image
+        ppp = Image.fromarray(this_pic)
+        this_pic = np.array(ppp)
+        # ppp.show()
+        pred = this_pic.copy()
 
-        k = max_min_norm(self.input)
-        k = k.cpu().float().detach().numpy()
-        # print(torch.max(k))
-        import numpy as np
-        def histeq(img, nbr_bins=256):
-            """ Histogram equalization of a grayscale image. """
+        source_joint = util.hmp2pose(self.heatmap.detach()*2+2,  self.num_classes )
+        pred_heat_map = util.hmp2pose(self.result[-1].detach()*2+2,  self.num_classes )
 
-            # 获取直方图p(r)
-            imhist, bins = np.histogram(img.flatten(), nbr_bins, normed=True)
-            # 获取T(r)
-            cdf = imhist.cumsum()  # cumulative distribution function
-            cdf = 255 * cdf / cdf[-1]
-            # 获取s，并用s替换原始图像对应的灰度值
-            result = np.interp(img.flatten(), bins[:-1], cdf)
-            return result.reshape(img.shape)
-        k =histeq(k)
-        k = torch.from_numpy(k)
-        k = k.cuda()
-        import matplotlib.pyplot as plt
-        import PIL.Image as Im
-        def heatmap2vistensor(heatmap):
-            heatmap = max_min_norm(heatmap)
-            heat = heatmap.cpu().float().detach().numpy()
+        for i in source_joint:
+            if i!=[]:
+                i = i[0]
+                x= int(i[0])
+                y = int(i[1])
+                cv2.circle(this_pic, center=(x, y), radius=5,thickness=cv2.FILLED, color=(0, 0, 255))
+        for i in pred_heat_map:
+            if i != []:
+                i = i[0]
+                x = int(i[0])
+                y = int(i[1])
+                cv2.circle(pred, center=(x, y), radius=5,thickness=cv2.FILLED, color=(0, 0, 255))
 
-            heat = heat[0]
-            cmap  = plt.get_cmap('jet')
-            rgba_img = cmap(heat) * 255
-            rgba_img = rgba_img.astype(np.uint8)
-            pic = Im.fromarray(rgba_img, "RGBA")
-            pic = pic.convert('RGB')
-            pic = np.array(pic).transpose((2,0,1))[np.newaxis,:,:,:]
-            pic = (pic/255-0.5)*2
-            return torch.from_numpy(pic)
+        # pred = util.draw_limbs_on_image(pred_heat_map,pred)
+        # this_pic = util.draw_limbs_on_image(source_joint, this_pic)
+        def tran(array):
+            array = array.transpose((2, 0, 1))
+            array = array[np.newaxis,:,:,:]
+            array = array/255*2-1
+            return array
+
+        pred = tran(pred)
+        this_pic = tran(this_pic)
 
 
+        visual_ret['groundtruth'] = torch.from_numpy(this_pic)
+        visual_ret['prediction'] = torch.from_numpy(pred)
 
-        visual_ret['heatmap'] = heatmap2vistensor(self.heatmap[0])
-        visual_ret['input'] =  k
-        visual_ret['result'] = heatmap2vistensor(self.result[0])
-        visual_ret['gray'] = self.gray
+        dir1 = self.input[:, 0, :, :].unsqueeze(1)
+        dir2 = self.input[:, 1, :, :].unsqueeze(1)
 
+        visual_ret['local_1'] = (dir1 -torch.min(dir1))/(torch.max(dir1)-torch.min(dir1))
+        visual_ret['local_2'] = (dir2- torch.min(dir2)) / (torch.max( dir2) - torch.min(dir2))
         return visual_ret
+
+
 def hg(**kwargs):
     model = HourglassNet(Bottleneck, num_stacks=kwargs['num_stacks'], num_blocks=kwargs['num_blocks'],
                          num_classes=kwargs['num_classes'])
     return model
 
 
-def my_hg():
-    model = HourglassNet(Bottleneck)
+def my_hg(input_channel,joint_num):
+    model = HourglassNet(Bottleneck,input_channel=input_channel,num_classes=joint_num)
     return model

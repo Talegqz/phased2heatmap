@@ -10,6 +10,14 @@ import torch.nn.functional as functional
 import os
 from torch.autograd import Variable
 
+def walk_dir(file):
+    for root, dirs,files in os.walk(file):
+        return root, dirs, files
+        pass
+
+
+
+
 
 def load_heatmap(hm_path):
     hm_array = np.load(hm_path)
@@ -26,12 +34,48 @@ def tensor2im(image_tensor, imtype=np.uint8):
     image_numpy = (np.transpose(image_numpy, (1, 2, 0)) + 1) / 2.0 * 255.0
     return image_numpy.astype(imtype)
 
+def draw_limbs_on_image(all_peaks,image):
+    limbSeq = [[2, 3], [2, 6], [3, 4], [4, 5], [6, 7], [7, 8], [2, 9], [9, 10],
+               [10, 11], [2, 12], [12, 13], [13, 14], [2, 1], [1, 15], [15, 17],
+               [1, 16], [16, 18]]
+    colors = [[255, 0, 0], [255, 85, 0], [255, 170, 0], [255, 255, 0], [170, 255, 0], [85, 255, 0], [0, 255, 0],
+              [0, 255, 85], [0, 255, 170], [0, 255, 255], [0, 170, 255], [0, 85, 255], [0, 0, 255], [85, 0, 255],
+              [170, 0, 255], [255, 0, 255], [255, 0, 170], [255, 0, 85]]
+    #
+    # limbSeq = [[9, 8], [10, 11], [11, 12], [8, 13], [13, 14], [14, 15], [1, 8],
+    #            [1, 5], [1, 2], [5, 6], [2, 3], [6, 7], [3, 4], [8, 10]]
+    # colors = [[255, 0, 0], [255, 85, 0], [255, 170, 0], [255, 255, 0], [170, 255, 0], [85, 255, 0], [0, 255, 0],
+    #           [0, 255, 85], [0, 255, 170], [0, 255, 255], [0, 170, 255], [0, 85, 255], [0, 0, 255], [85, 0, 255]]
 
-def hmp2pose_by_numpy(hmp_numpy):
+    stickwidth = 4
+
+    for i in range(len(limbSeq)):
+        limb = limbSeq[i]
+        cur_canvas = image.copy()
+        point1_index = limb[0] - 1
+        point2_index = limb[1] - 1
+
+        if len(all_peaks[point1_index]) > 0 and len(all_peaks[point2_index]) > 0:
+            point1 = all_peaks[point1_index][0][0:2]
+            point2 = all_peaks[point2_index][0][0:2]
+            X = [point1[1], point2[1]]
+            Y = [point1[0], point2[0]]
+            mX = np.mean(X)
+            mY = np.mean(Y)
+            # cv2.line()
+            length = ((X[0] - X[1]) ** 2 + (Y[0] - Y[1]) ** 2) ** 0.5
+            angle = math.degrees(math.atan2(X[0] - X[1], Y[0] - Y[1]))
+            polygon = cv2.ellipse2Poly((int(mY), int(mX)), (int(length / 2), stickwidth), int(angle), 0, 360, 1)
+            cv2.fillConvexPoly(cur_canvas, polygon, colors[i])
+            image = cv2.addWeighted(image, 0.4, cur_canvas, 0.6, 0)
+
+    return image
+
+def hmp2pose_by_numpy(hmp_numpy,joint_num):
     all_peaks = []
     peak_counter = 0
 
-    for part in range(18):
+    for part in range(joint_num):
         map_ori = hmp_numpy[:, :, part]
         map = gaussian_filter(map_ori, sigma=5)
 
@@ -63,10 +107,10 @@ def hmp2pose_by_numpy(hmp_numpy):
     return all_peaks
 
 
-def hmp2pose(hmp_tensor):
+def hmp2pose(hmp_tensor,joint_num):
     hmp_numpy = hmp_tensor[0].cpu().float().numpy()
     hmp_numpy = np.transpose(hmp_numpy, (1, 2, 0))
-    return hmp2pose_by_numpy(hmp_numpy)
+    return hmp2pose_by_numpy(hmp_numpy,joint_num)
 
 
 def hmp2im(heatmap_tensor):
@@ -538,6 +582,9 @@ def heatmap2array(heatmaps, size=256):
     return arrays
 
 
+
+
+
 def array2image(arrays):
     cmap = plt.get_cmap('jet')
     rgba_img = cmap(1-arrays)
@@ -676,3 +723,31 @@ def norm_per_channels_m1to1(A, isVar=True):
     return 2 * A_res - 1
 
 # error_graph('/mnt/results/experiment10_pix2pix(withD_withoutD)/single_paired_D_loss_with_5_batchsize=16_lambda=100/test_latest/images')
+def joint2heatmap(joint_list,joint_num,gaussian_kernel,width,height,pad):
+    all = []
+    for i in range(joint_num):
+        pic = torch.Tensor(1, 1, width, height).fill_(0).cuda()
+        if joint_list[i] !=[]:
+            point = joint_list[i]
+            pic[0][0][int(point[0])][int(point[1])] = 1
+            pic = torch.nn.functional.conv2d(torch.autograd.Variable(pic),torch.autograd.Variable(gaussian_kernel),padding = pad).data
+        pic = pic[0][0].cpu().numpy()
+        all.append(pic)
+    all = np.array(all)
+
+    return all
+
+
+def get_gaussian_kernel(kernel_size=10,sigma=40):
+    x_cord = torch.Tensor(np.arange(kernel_size))
+    x_grid = x_cord.repeat(kernel_size).view(kernel_size, kernel_size)
+    y_grid = x_grid.t()
+    xy_grid = torch.stack([x_grid, y_grid], dim=-1)
+
+    mean = (kernel_size - 1) / 2.
+    variance = sigma ** 2.
+    gaussian_kernel = torch.exp(-torch.sum((xy_grid - mean) ** 2., dim=-1) / (2 * variance))
+    gaussian_kernel = gaussian_kernel.view(1, 1, kernel_size, kernel_size)
+    return gaussian_kernel
+
+

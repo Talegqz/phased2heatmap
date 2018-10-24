@@ -13,6 +13,8 @@ data/*
 checkpoints/*
 save_model/*
 result/*
+human36m/*
+test_data/*
 # Distribution / packaging
 
 .Python

@@ -18,10 +18,10 @@ def numpy2tensor(x,part=1000):
 
 def start():
 
-    print_freq = 800
-    plot_freq = 100
-    display_freq = 100
-    data_size = 4000
+    print_freq = 80
+    plot_freq = 20
+    display_freq = 20
+    data_size = 1200
     # update_html_freq = 1000000000
     part = 1200
     save_name = 'save_model/model'
@@ -63,7 +63,7 @@ def start():
 
     model = hourglass.my_hg()
 
-    # model.load_state_dict(torch.load('save_model/model6'))
+    model.load_state_dict(torch.load('save_model/model9'))
 
     all_epoch = 100000000000000
     visualizer = Visualizer()
@@ -71,7 +71,7 @@ def start():
 
 
 
-    for epoch in range(all_epoch):
+    for epoch in range(39,all_epoch):
         epoch_iter = 0
 
         for i ,data in enumerate(loader):

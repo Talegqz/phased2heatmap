@@ -1,3 +1,4 @@
+import matplotlib.pyplot as plt
 import numpy as np
 import util.util as tool
 import os
@@ -164,18 +165,54 @@ def change_demension(APL):
         p.append(np.array(lp))
     return allbands_local, a, p
 
+def heatmap2array(heatmaps, size=256):
+    arrays = np.zeros(shape=(size, size))
+    arrays.fill(heatmaps.max())
+
+    x_top = 0
+    y_top = 0
+    for x in range(heatmaps.shape[0]):
+        for y in range(heatmaps.shape[1]):
+            _x = int(x_top+x)
+            _y = int(y_top+y)
+            arrays[_x][_y] = heatmaps[x][y]
+    return arrays
+def norm_max_min(array):
+    return (array-np.min(array)+10**(-100))/(np.max(array)-np.min(array)+10**(-100))
+
+def draw():
+    heat = np.load('data/a1p1all_deal_heat.npy')
+
+    heat1 = heat[9]
+
+    heat1 = norm_max_min(heat1)
+    # ay = heatmap2array(heat1)
+    # pic = tool.array2image(heat1)
+    cmap = plt.get_cmap('jet')
+    rgba_img = cmap(heat1)*255
+    rgba_img = rgba_img.astype(np.uint8)
+    pic = Im.fromarray(rgba_img,"RGBA")
+    pic.convert('RGB')
+    pic.show()
+
+    print(pic)
+
+
+
 
 if __name__ == '__main__':
 
     # get_gray_heatmap()
-    APL = get_local_motion()
-    allbands_local,_,_ = change_demension(APL)
-    allbands_local =allbands_local[0]
-    allbands_local = allbands_local[:,0,:,:]
-    print(allbands_local.shape)
-    np.save('data/a1p1_local',allbands_local)
-    local = np.load('data/a1p1_local.npy')
-    heat = np.load('data/a1p1all_deal_heat.npy')
-    print(np.max(heat))
-    print(' ')
+    # APL = get_local_motion()
+    # allbands_local,_,_ = change_demension(APL)
+    # allbands_local =allbands_local[0]
+    # allbands_local = allbands_local[:,0,:,:]
+    # print(allbands_local.shape)
+    # np.save('data/a1p1_local',allbands_local)
+    # local = np.load('data/a1p1_local.npy')
+    # heat = np.load('data/a1p1all_deal_heat.npy')
+    # print(np.max(heat))
+    # print(' ')
+
+    draw()
 
